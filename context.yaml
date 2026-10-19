@@ -1,63 +1,108 @@
 # Smart Mailbox — ESP8266 project context
-# Use this file as durable project memory for agents and contributors.
+# Durable project memory for agents and contributors.
 
 project:
   name: smart-mailbox
   description: >
-    Wi-Fi-controlled mailbox lock on ESP8266 (NodeMCU). Serves a simple
-    dashboard to lock/unlock a servo latch. Mail presence and distance
-    sensors are placeholders for a later iteration.
+    Wi-Fi-controlled mailbox lock on ESP8266 (NodeMCU) with embedded mobile
+    dashboard, JSON API, SG90 servo lock, and gated HC-SR04 mail detection.
   board: nodemcuv2
   framework: arduino
   platform: espressif8266
   build_system: platformio
+  repo: https://github.com/aryan-dani/smart-mailbox
+
+stages:
+  current: "Stages 1-3 wiring; ENABLE_ULTRASONIC=1 — calibrate empty/mail distances next"
+  next: "Flash, verify Serial distances, set EMPTY_DISTANCE_CM and MAIL_THRESHOLD_CM"
+  sequence:
+    - 1_baseline_wifi_servo
+    - 2_dashboard_json_api
+    - 3_hcsr04_after_divider
+    - 4_full_mailbox_integration
+    - 5_optional_mqtt
+    - 6_mechanical_mount
 
 hardware:
   mcu: ESP8266
-  board_label: NodeMCU v2 (or Wemos D1 Mini via alternate env)
+  board_label: NodeMCU v2 (ESP-12E/12F compatible)
   servo:
+    model: SG90
     pin: D6
+    gpio: 12
     lock_angle: 0
     unlock_angle: 90
-  planned:
-    - mail_presence_sensor
-    - ultrasonic_distance_cm
+    power: VIN_or_external_5V
+    never_power_from: 3V3
+  ultrasonic:
+    model: HC-SR04
+    enabled_by_default: true
+    trig_pin: D5
+    trig_gpio: 14
+    echo_pin: D2
+    echo_gpio: 4
+    echo_note: MUST use 5V-to-3.3V voltage divider (e.g. 1k + 2k) before D2
+    never: connect_echo_directly_to_gpio
+  planned_not_assumed:
+    - DHT11_DHT22_humidity
 
 firmware:
   entry: src/main.cpp
-  secrets: include/secrets.h  # gitignored; copy from secrets.h.example
+  config: include/config.h
+  secrets: include/secrets.h
+  feature_flags:
+    ENABLE_ULTRASONIC: 1
+    ENABLE_MQTT: 0
   endpoints:
-    - path: /
-      method: GET
-      handler: handleHome
-      notes: HTML dashboard with lock status
-    - path: /unlock
-      method: GET
-      handler: handleUnlock
-      notes: Moves servo to UNLOCK_ANGLE
-    - path: /lock
-      method: GET
-      handler: handleLock
-      notes: Moves servo to LOCK_ANGLE
-  state:
-    locked: bool  # true at boot; servo starts at LOCK_ANGLE
+    - method: GET
+      path: /
+      notes: Embedded mobile dashboard
+    - method: GET
+      path: /api/status
+      notes: JSON source of truth
+    - method: POST
+      path: /api/lock
+      notes: Servo to LOCK_ANGLE; returns status JSON
+    - method: POST
+      path: /api/unlock
+      notes: Servo to UNLOCK_ANGLE; returns status JSON
+  status_schema:
+    deviceId: string
+    lockState: LOCKED|UNLOCKED
+    mailStatus: MAIL_DETECTED|EMPTY|UNKNOWN
+    distanceCm: number|null
+    sensorStatus: DISABLED|NOT_READY|OK|TIMEOUT|OUT_OF_RANGE
+    wifiConnected: boolean
+    wifiRssi: number|null
+    uptimeMs: number
+    lastSensorUpdateMs: number|null
+  rules:
+    - servo_write_only_on_state_change
+    - no_false_mail_when_sensor_disabled
+    - ultrasonic_never_auto_unlocks
+    - no_physical_lock_buttons
 
-ui:
-  title: My Mailbox
-  status_fields:
-    - lock_status
-    - mail_status  # currently hardcoded EMPTY
-    - distance_cm  # currently -- cm
-  actions:
-    - unlock
-    - lock
+mqtt_stage5:
+  required_for_local: false
+  note: >
+    MQTT is a protocol. HiveMQ Cloud is a hosted broker SaaS option, not
+    confirmed. Do not invent credentials. No public ESP exposure.
+  topics:
+    status: smart-mailbox/<device-id>/status
+    command: smart-mailbox/<device-id>/command
+    event: smart-mailbox/<device-id>/event
+  command_payload:
+    lock: '{"action":"lock"}'
+    unlock: '{"action":"unlock"}'
 
 security_notes:
-  - Never commit Wi-Fi credentials; use include/secrets.h locally
-  - Dashboard has no auth yet — only use on trusted LAN
-  - Prefer rotating Wi-Fi password if it was ever pasted into chat/code
+  - Never commit Wi-Fi or MQTT credentials
+  - Trusted LAN only; no port forwarding for prototype
+  - Cardboard + SG90 is demonstration, not security-rated
 
-next_steps:
-  - Add ultrasonic / IR mail detection
-  - Wire distance into the dashboard via AJAX or SSE
-  - Optional basic auth or token for /lock and /unlock
+calibration:
+  empty_distance_cm: 25.0
+  mail_threshold_cm: 8.0
+  procedure: >
+    Mount sensor, average empty distance, measure with mail, set
+    EMPTY_DISTANCE_CM and MAIL_THRESHOLD_CM in config.h, retest.

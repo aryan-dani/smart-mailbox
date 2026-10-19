@@ -1,0 +1,63 @@
+# Smart Mailbox — ESP8266 project context
+# Use this file as durable project memory for agents and contributors.
+
+project:
+  name: smart-mailbox
+  description: >
+    Wi-Fi-controlled mailbox lock on ESP8266 (NodeMCU). Serves a simple
+    dashboard to lock/unlock a servo latch. Mail presence and distance
+    sensors are placeholders for a later iteration.
+  board: nodemcuv2
+  framework: arduino
+  platform: espressif8266
+  build_system: platformio
+
+hardware:
+  mcu: ESP8266
+  board_label: NodeMCU v2 (or Wemos D1 Mini via alternate env)
+  servo:
+    pin: D6
+    lock_angle: 0
+    unlock_angle: 90
+  planned:
+    - mail_presence_sensor
+    - ultrasonic_distance_cm
+
+firmware:
+  entry: src/main.cpp
+  secrets: include/secrets.h  # gitignored; copy from secrets.h.example
+  endpoints:
+    - path: /
+      method: GET
+      handler: handleHome
+      notes: HTML dashboard with lock status
+    - path: /unlock
+      method: GET
+      handler: handleUnlock
+      notes: Moves servo to UNLOCK_ANGLE
+    - path: /lock
+      method: GET
+      handler: handleLock
+      notes: Moves servo to LOCK_ANGLE
+  state:
+    locked: bool  # true at boot; servo starts at LOCK_ANGLE
+
+ui:
+  title: My Mailbox
+  status_fields:
+    - lock_status
+    - mail_status  # currently hardcoded EMPTY
+    - distance_cm  # currently -- cm
+  actions:
+    - unlock
+    - lock
+
+security_notes:
+  - Never commit Wi-Fi credentials; use include/secrets.h locally
+  - Dashboard has no auth yet — only use on trusted LAN
+  - Prefer rotating Wi-Fi password if it was ever pasted into chat/code
+
+next_steps:
+  - Add ultrasonic / IR mail detection
+  - Wire distance into the dashboard via AJAX or SSE
+  - Optional basic auth or token for /lock and /unlock
